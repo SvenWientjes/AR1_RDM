@@ -1,6 +1,7 @@
 ---
 title: "Autoregressive RDM"
-format: html
+author: "Sven Wientjes"
+format: gfm
 editor: visual
 ---
 
