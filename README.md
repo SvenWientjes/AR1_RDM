@@ -40,9 +40,9 @@ $f_i(y|\mathbf{v}, b, \mathbf{db}, \mathbf{s}) = p(y|\frac{v_i}{s_i}, \frac{b-db
 In a 2-alternative forced choice task, we can set up a particularly
 effective parameterization in terms of the differences between the two
 relevant accumulators. The diffusion process is going to be biased based
-on response identity, but the distribution of drift rate (both mean $v$
-and variance $s$) are going to be determined by the stimulus determining
-which of the two racers corresponds to the correct response.
+on response identity, but the drifting process itself (both its mean $v$
+and its variance $s$) are going to be determined by the stimulus
+determining which of the two racers corresponds to the correct response.
 
 In total, our 2AFC RDM will have 6 free parameters,
 $[B, db, V, vd, sd, T_{er}]$. $B$ corresponds to the overall response
