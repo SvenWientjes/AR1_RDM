@@ -21,7 +21,7 @@ In a 2-alternative forced choice task, we can set up a particularly effective pa
 
 In total, our 2AFC RDM will have 6 free parameters, $[B, db, V, vd, sd, T_{er}]$. $B$ corresponds to the overall response threshold, $db$ corresponds to the bias in favor of a particular racer (negative values will favor response 1, positive values will favor response 2). $V$ is the average drift rate between the two racers. $vd$ and $sd$ are the difference in drift rate and drift rate variability respectively, between the racer corresponding to the currently correct response and the racer corresponding to the currently incorrect response. $T_{er}$ is a non-decision time.
 
-Note that the parameters of this model do not vary across trials, yet we have six free parameters. This is two more than the DDM without between-trial variability. This is because the RDM incorporates two mechanisms in the generative process that the DDM does not. The DDM does not contain an "average drift rate" analogous to $V$--instead there is only a single drifting state that evolves according to the relative evidence in favor of a particular option, mostly mimicking $vd$. Also, by nature of there being only a single drifting state, there can be no difference in variability analogous to $sd$.
+Note that the parameters of this model do not vary across trials, yet we have six free parameters. This is two more than the DDM without between-trial variability. This is because the RDM incorporates two mechanisms in the generative process that the DDM does not. The DDM does not contain an "average drift rate" analogous to $V$--instead there is only a single drifting state that evolves according to the relative evidence in favor of a particular option, mostly resembling $vd$. Also, in the DDM, by nature of there being only a single drifting state, there can be no difference in variability analogous to $sd$ in the RDM.
 
 ## Exploring data
 
@@ -41,6 +41,7 @@ source("functions/rWald.R")
 Before we fit the RDM and discuss its autoregressive extension, lets explore some empirical data we would like to explain. We will use Experiment 2B from [Desender et al. (2022)](https://doi.org/10.1038/s41467-022-31727-0). Let's load it and do some simple data wrangling:
 
 ```{r}
+
 # Load data
 MyData <- fread("https://raw.githubusercontent.com/kdesende/dynamic_influences_on_static_measures/refs/heads/main/data_exp2B.csv")
 
@@ -48,8 +49,11 @@ MyData <- fread("https://raw.githubusercontent.com/kdesende/dynamic_influences_o
 MyData$pp         <- ordered(MyData$sub)
 levels(MyData$pp) <- c(1:99)
 
-# Recode stimulus 0 to -1
-MyData[stim==0,stim:=-1]
+# Recode stimulus and response to 1/2
+MyData[stim==1,stim:=2]
+MyData[stim==0,stim:=1]
+MyData[response==1,response:=2]
+MyData[response==0,response:=1]
 
 # Mark trials for exclusion
 MyData$yi <- 1
@@ -130,13 +134,75 @@ for(PNUM in 1:99){
 
 ### Simulating from the RDM
 
-Stan gives us the parameters of the RDM, but we are interested in how well the RDM accounts for our data. Therefore, we need to simulate from the model, using the parameters we got from Stan. The code below runs these simulations. Again, you could instead download my simulations here and unpack them as `simulations/RDM_simulations.csv`.
+Stan gives us the parameters of the RDM, but we are interested in how well the RDM accounts for our data. Therefore, we need to simulate from the model, using the parameters we got from Stan. The code below runs these simulations. It is a bit inefficiently programmed, but works robustly. Again, you could instead download my simulations here and unpack them as `simulations/RDM_simulations.csv`.
 
 ```{r}
 #| eval: false
 
-"put simulation code"
-
+# Sample from every participant
+N_sims       <- 500
+total_sims   <- N_sims * 500
+SIM_list     <- list()
+downsamp_idx <- round(seq(1,8000,length.out=N_sims))
+for(PNUM in 1:99){
+  print(paste0("=================================="))
+  print(paste0("Simulating participant ",PNUM,"/99"))
+  
+  # Get participant data and fit
+  Pdat   <- MyData[pp==PNUM]
+  RDMfit <- as_cmdstan_fit(paste0("fits/RDM/RDM_pp",formatC(PNUM,width=2,flag="0"),"-",1:4,".csv"))
+  
+  # Get parameters over time
+  v1_stim1 <- RDMfit$draws("v_pos1_s[1]",format="matrix")[downsamp_idx,]
+  b1_stim1 <- RDMfit$draws("b_pos1_s[1]",format="matrix")[downsamp_idx,]
+  v2_stim1 <- RDMfit$draws("v_min1_s[1]",format="matrix")[downsamp_idx,]
+  b2_stim1 <- RDMfit$draws("b_min1_s[1]",format="matrix")[downsamp_idx,]
+  
+  v1_stim2 <- RDMfit$draws("v_pos1_s[2]",format="matrix")[downsamp_idx,]
+  b1_stim2 <- RDMfit$draws("b_pos1_s[2]",format="matrix")[downsamp_idx,]
+  v2_stim2 <- RDMfit$draws("v_min1_s[2]",format="matrix")[downsamp_idx,]
+  b2_stim2 <- RDMfit$draws("b_min1_s[2]",format="matrix")[downsamp_idx,]
+  
+  t0 <- RDMfit$draws("t0",format="matrix")[downsamp_idx,]
+  
+  # Get simulated choice/RTs
+  sim_rt     <- numeric(total_sims)
+  sim_choice <- numeric(total_sims)
+  was_stim   <- numeric(total_sims)
+  
+  si <- 1
+  for(s in 1:N_sims){
+    print(paste0("    Simulating sample ",s,"/",dim(v1_stim1)[1]))
+    for(t in 1:nrow(Pdat)){
+      if(Pdat[t,stim]==1){
+        racers <- rWald(n = 2, 
+                        B = c(b1_stim1[s],b2_stim1[s]), 
+                        v = c(v1_stim1[s],v2_stim1[s]), 
+                        A = 0)
+      }else if(Pdat[t,stim]==2){
+        racers <- rWald(n = 2, 
+                        B = c(b1_stim2[s],b2_stim2[s]), 
+                        v = c(v1_stim2[s],v2_stim2[s]), 
+                        A = 0)
+      }
+      sim_rt[si]     <- min(racers) + t0[s]
+      sim_choice[si] <- which.min(racers)
+      was_stim[si]   <- Pdat[t,stim]
+      si             <- si+1
+    }
+  }
+  SIM_list[[PNUM]] <- data.table(
+    p        = PNUM,
+    sim      = rep(1:N_sims, each = nrow(Pdat)),
+    t        = rep(1:nrow(Pdat), N_sims),
+    rt       = sim_rt,
+    choice   = sim_choice,
+    was_stim = was_stim,
+    correct  = sim_choice==was_stim
+  )
+}
+SIM <- rbindlist(SIM_list)
+fwrite(SIM, "simulations/RDM_simulations.csv.gz", compress = "gzip", compressLevel = 9)
 ```
 
 ### Posterior predictive check of RT distributions
@@ -145,10 +211,19 @@ We can now check how well our simulations match the empirical RT distributions o
 
 ```{r}
 
-"put visualization code"
+# Load simulations
+SIM <- fread("simulations/RDM_simulations.csv.gz")
+
+# Make density plot
+ggplot() +
+  geom_density(data = MyData[pp==69 & yi==1], linetype="dashed",linewidth=1, aes(x=rt), color="orange") +
+  geom_density(data = MyData[pp==15 & yi==1], linetype="dashed",linewidth=1, aes(x=rt), color="purple") +
+  geom_density(data = SIM[p==69&rt>0.1&rt<3.0], linewidth=0.5, aes(x=rt), color="orange") +
+  geom_density(data = SIM[p==15&rt>0.1&rt<3.0], linewidth=0.5, aes(x=rt), color="purple") +
+  theme_minimal()
 ```
 
-(compare to DDM?)
+Compared to the fits with the (AR1) DDM ([see here](github.com/SvenWientjes/AR1_DDM)) we obtain much better fits to the marginal RT distributions.
 
 ### Posterior predictive check of the CAF
 
@@ -156,10 +231,37 @@ We can also check what the relationship between response times and errors is acc
 
 ```{r}
 
-"put CAF code"
+# Get simulated CAF
+CAFlist <- list()
+for(simje in 1:SIM[,max(sim)]){
+  CAFlist[[simje]] <- calculate_group_caf(SIM[sim==simje&rt>0.1&rt<3.0], "rt", "correct", "p", num_bins=7)
+}
+CAF_sim <- rbindlist(CAFlist)
+
+# Compute intervals
+CAF_ppc <- CAF_sim[,list(min_rt = bayestestR::hdi(mean_rt)$CI_low,
+                         max_rt = bayestestR::hdi(mean_rt)$CI_high,
+                         med_rt = median(mean_rt),
+                         min_ac = bayestestR::hdi(mean_acc)$CI_low,
+                         max_ac = bayestestR::hdi(mean_acc)$CI_high,
+                         med_ac = median(mean_acc)),
+                   by=rt_bin]
+
+# Visualize
+ggplot() +
+  geom_point(data=CAF,aes(x=mean_rt,y=mean_acc)) +
+  geom_errorbar(data=CAF,aes(x=mean_rt,y=mean_acc,ymin=min_acc,ymax=max_acc),width=0.05) +
+  geom_line(data=CAF,aes(x=mean_rt,y=mean_acc)) +
+  geom_line(data=CAF_ppc, aes(x=med_rt,y=med_ac),linetype="dashed") +
+  geom_errorbar(data=CAF_ppc, aes(x=med_rt,ymin=min_ac,ymax=max_ac),linetype="dashed") + 
+  geom_errorbarh(data=CAF_ppc, aes(xmin=min_rt,xmax=max_rt,y=med_ac),linetype="dashed") +
+  theme_minimal() +
+  xlab("RT") + ylab("Accuracy")
 ```
 
-(slow errors?) (compare to DDM--fast errors?)
+Here, the solid lines correspond to the empirical CAF and the dashed lines correspond to the posterior predicted CAF from the RDM. We can see that the RDM tends to have a decreasing CAF. This is because as the decision process takes longer, the probability of the incorrect (on average slower) racer winning increases. This happens in the RDM because the racers are not in competition. By contrast, in the DDM, there is *strong competition*, because each piece of evidence in favor of one option counts as a piece of evidence against the other option. This tug-of-war leads to a flatter CAF for the DDM.
+
+Now we see that the RDM provides better overall marginal fits to the RT distributions, but does not provide quite the right CAF. The next question to ask is whether between-trial fluctuations can help improve the fit to the CAF.
 
 ## Fitting and exploring the AR1-RDM model
 
