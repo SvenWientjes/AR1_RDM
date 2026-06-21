@@ -341,3 +341,216 @@ the fit to the CAF.
 ## Fitting and exploring the AR1-RDM model
 
 Bla.
+
+### Fitting the AR1-RDM model with Stan
+
+We can fit the AR1-RDM model very similarly to how we fitted the regular
+RDM model. You can run this code, or download my simulations here.
+
+``` r
+# Load model
+RDMmod <- cmdstan_model("models/RDM_AR1.stan")
+
+# Loop over participants to fit
+for(PNUM in 1:99){
+  Pdat <- MyData[pp==PNUM]
+  
+  DataList <- list(N       = nrow(Pdat),
+                   choice  = Pdat$response,
+                   stim    = Pdat$stim,
+                   y       = Pdat$rt,
+                   yi      = Pdat$yi,
+                   min_rt  = min(Pdat[yi==1]$rt))
+  
+  # Fit the model
+  fit <- RDMmod$sample( #250s, 0d
+    data            = DataList,
+    chains          = 4,
+    parallel_chains = 4,
+    adapt_delta     = 0.90,
+    max_treedepth   = 10,
+    init_buffer     = 200,
+    term_buffer     = 200,
+    window          = 25,
+    iter_warmup     = 1975,
+    iter_sampling   = 2000,
+    output_dir      = "fits/RDM_AR1",
+    output_basename = paste0("RDM_AR1_pp",formatC(PNUM,width=2,flag="0"))
+  )
+}
+```
+
+There are a couple of chains where the fit did not go well for me.
+Usually, I would weed these out manually and see if refitting them
+solves the issue, perhaps with a higher `adapt_delta`. It can happen
+that Stan “randomly” does not converge close to the typical set during
+the adaptation phase, after which sampling would not work as intended.
+If refitting does not solve this issue, there is a structural issue with
+the model and/or the data. For now, lets continue to see how the model
+performs.
+
+### Exploring the fit
+
+We can visualize the trajectory of the RDM parameters: for a particular
+participant, and overlay a smooth Loess fit (blue line) to visualize any
+subtle structural changes that may not be obvious from between-trial
+noise:
+
+``` r
+# Select & load participant fit
+PNUM <- 1
+RDMfit <- as_cmdstan_fit(paste0("fits/RDM_AR1/RDM_AR1_pp",formatC(PNUM,width=2,flag="0"),"-",1:4,".csv"))
+
+# Extract parameters and compute posterior means
+B_draws  <- apply(RDMfit$draws("B_t",format="matrix"),2,mean)
+b_draws  <- apply(RDMfit$draws("b_t",format="matrix"),2,mean)
+V_draws  <- apply(RDMfit$draws("V_t",format="matrix"),2,mean)
+v_draws  <- apply(RDMfit$draws("v_t",format="matrix"),2,mean)
+
+
+# Combine into a single data.table for plotting
+plot_draws <- data.table(t = rep(1:500,4),
+                         p = rep(c("B","db","V","dv"),each=500),
+                         y = c(B_draws,b_draws,V_draws,v_draws))
+
+# Plot
+ggplot(plot_draws, aes(x=t,y=y)) +
+  facet_wrap(.~p,scales="free") +
+  geom_line() +
+  geom_smooth() +
+  theme_minimal()
+```
+
+![](README_files/figure-commonmark/unnamed-chunk-10-1.png)
+
+``` r
+# Remove big objects from cache
+rm(RDMfit,B_draws,b_draws,V_draws,v_draws,plot_draws)
+```
+
+We can see that this participant has a strong structural fluctuation for
+the overall response threshold $B$, and minor fluctuations for the
+response bias $b$ and overall drift rate $V$. Let’s explore another
+participant:
+
+``` r
+# Select & load participant fit
+PNUM <- 2
+RDMfit <- as_cmdstan_fit(paste0("fits/RDM_AR1/RDM_AR1_pp",formatC(PNUM,width=2,flag="0"),"-",1:4,".csv"))
+
+# Extract parameters and compute posterior means
+B_draws  <- apply(RDMfit$draws("B_t",format="matrix"),2,mean)
+b_draws  <- apply(RDMfit$draws("b_t",format="matrix"),2,mean)
+V_draws  <- apply(RDMfit$draws("V_t",format="matrix"),2,mean)
+v_draws  <- apply(RDMfit$draws("v_t",format="matrix"),2,mean)
+
+
+# Combine into a single data.table for plotting
+plot_draws <- data.table(t = rep(1:500,4),
+                         p = rep(c("B","db","V","dv"),each=500),
+                         y = c(B_draws,b_draws,V_draws,v_draws))
+
+# Plot
+ggplot(plot_draws, aes(x=t,y=y)) +
+  facet_wrap(.~p,scales="free") +
+  geom_line() +
+  geom_smooth() +
+  theme_minimal()
+```
+
+![](README_files/figure-commonmark/unnamed-chunk-11-1.png)
+
+``` r
+# Remove big objects from cache
+rm(RDMfit,B_draws,b_draws,V_draws,v_draws,plot_draws)
+```
+
+For this participant, we see highly autocorrelated changes in the
+overall drift rate $V$. This is noteworthy, as the DDM does not have a
+parameter that corresponds to $V$–its drift rate corresponds more to
+$dv$ which is the difference between correct and incorrect drift rate.
+
+#### Simulating choice-RT data
+
+In order to check how well the AR1-RDM model fits the RT distributions
+and the CAF of the empirical data, we can simulate from the AR1-RDM
+model, very similar to how we can simulate from the regular RDM model.
+You can run this code, or download my simulations here.
+
+``` r
+# Get simulatioan parameters
+N_sims       <- 500
+total_sims   <- N_sims * 500
+SIM_list     <- list()
+downsamp_idx <- round(seq(1,8000,length.out=N_sims))
+
+# Simulate participants
+for(PNUM in 1:99){
+  print(paste0("=================================="))
+  print(paste0("Simulating participant ",PNUM,"/99"))
+  
+  # Get participant data and fit
+  Pdat   <- MyData[pp==PNUM]
+  RDMfit <- as_cmdstan_fit(paste0("fits/RDM_AR1/RDM_AR1_pp",formatC(PNUM,width=2,flag="0"),"-",1:4,".csv"))
+  
+  # Get parameters over time
+  vacc <- RDMfit$draws("v_acc",format="matrix")[downsamp_idx,]
+  bacc <- RDMfit$draws("b_acc",format="matrix")[downsamp_idx,]
+
+  # Select by response identity
+  v1 <- vacc[,grep("v_acc\\[\\d+,1\\]",colnames(vacc))]
+  v2 <- vacc[,grep("v_acc\\[\\d+,2\\]",colnames(vacc))]
+  b1 <- vacc[,grep("b_acc\\[\\d+,1\\]",colnames(bacc))]
+  b2 <- vacc[,grep("b_acc\\[\\d+,2\\]",colnames(bacc))]
+  
+  # Get non-decision time
+  t0 <- RDMfit$draws("t0",format="matrix")[downsamp_idx,]
+  
+  # Get simulated choice/RTs
+  sim_rt     <- numeric(total_sims)
+  sim_choice <- numeric(total_sims)
+  was_stim   <- numeric(total_sims)
+  
+  # Loop over simulations
+  si <- 1
+  for(s in 1:N_sims){
+    print(paste0("    Simulating sample ",s,"/",dim(v1)[1]))
+    for(t in 1:nrow(Pdat)){
+      
+      racers <- rWald(n = 2, 
+                      B = c(b1[s,t],b2[s,t]), 
+                      v = c(v1[s,t],v2[s,t]), 
+                      A = 0)
+      
+      sim_rt[si]     <- min(racers) + t0[s]
+      sim_choice[si] <- which.min(racers)
+      was_stim[si]   <- Pdat[t,stim]
+      si             <- si+1
+    }
+  }
+  SIM_list[[PNUM]] <- data.table(
+    p        = PNUM,
+    sim      = rep(1:N_sims, each = nrow(Pdat)),
+    t        = rep(1:nrow(Pdat), N_sims),
+    rt       = sim_rt,
+    choice   = sim_choice,
+    was_stim = was_stim,
+    correct  = sim_choice==was_stim
+  )
+}
+# Save
+SIM <- rbindlist(SIM_list)
+fwrite(SIM, "simulations/RDM_AR1_simulations.csv.gz", compress = "gzip", compressLevel = 9)
+```
+
+#### Posterior predictions of RT distributions
+
+Bla.
+
+#### Posterior predictions of the CAF
+
+Bla.
+
+### Modeling correlated error patterns
+
+Bla.

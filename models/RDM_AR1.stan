@@ -53,21 +53,18 @@ parameters{
   real rho_b_raw;
   real rho_V_raw;
   real rho_v_raw;
-  real rho_s_raw;
 
   // Innovation scales
   real log_sigma_B;
   real log_sigma_b;
   real log_sigma_V;
   real log_sigma_v;
-  real log_sigma_s;
 
   // Non-centered standard normal innovations
   vector[N] B_z;
   vector[N] b_z;
   vector[N] V_z;
   vector[N] v_z;
-  vector[N] s_z;
 }
 transformed parameters{
   
@@ -76,21 +73,18 @@ transformed parameters{
   real rho_b = inv_logit(rho_b_raw);
   real rho_V = inv_logit(rho_V_raw);
   real rho_v = inv_logit(rho_v_raw);
-  real rho_s = inv_logit(rho_s_raw);
-  
+
   // Variance of AR(1) process
   real<lower=0> sigma_B = exp(log_sigma_B);
   real<lower=0> sigma_b = exp(log_sigma_b);
   real<lower=0> sigma_V = exp(log_sigma_V);
   real<lower=0> sigma_v = exp(log_sigma_v);
-  real<lower=0> sigma_s = exp(log_sigma_s);
-  
+
   vector[N] B_t;
   vector[N] b_t;
   vector[N] V_t;
   vector[N] v_t;
-  vector[N] s_t;
-  
+
   matrix[N, 2] v_acc;
   matrix[N, 2] b_acc;
   
@@ -103,29 +97,25 @@ transformed parameters{
     vector[N] b_dev;
     vector[N] V_dev;
     vector[N] v_dev;
-    vector[N] s_dev;
-    
+
     // Precompute constants for the AR(1) processes
     real scale_B = sqrt(1 - square(rho_B));
     real scale_b = sqrt(1 - square(rho_b));
     real scale_V = sqrt(1 - square(rho_V));
     real scale_v = sqrt(1 - square(rho_v));
-    real scale_s = sqrt(1 - square(rho_s));
-  
+
     // Seed starting deviation
     B_dev[1] = B_z[1];
     b_dev[1] = b_z[1];
     V_dev[1] = V_z[1];
     v_dev[1] = v_z[1];
-    s_dev[1] = s_z[1];
-  
+
     // Loop over vector of deviations
     for (n in 2:N) {
       B_dev[n] = rho_B * B_dev[n - 1] + scale_B * B_z[n];
       b_dev[n] = rho_b * b_dev[n - 1] + scale_b * b_z[n];
       V_dev[n] = rho_V * V_dev[n - 1] + scale_V * V_z[n];
       v_dev[n] = rho_v * v_dev[n - 1] + scale_v * v_z[n];
-      s_dev[n] = rho_s * s_dev[n - 1] + scale_s * s_z[n];
     }
   
     // Non-centered mapping to true parameter values over time
@@ -133,7 +123,6 @@ transformed parameters{
     b_t = b_raw + sigma_b * b_dev;
     V_t = V_raw + sigma_V * V_dev;
     v_t = v_raw + sigma_v * v_dev;
-    s_t = s_raw + sigma_s * s_dev;
 
     // --- ARRAYS FOR QUICK LOOKUP BY ACCUMULATOR ---
     // Column 1 = Accumulator 1 (pos1), Column 2 = Accumulator 2 (min1)
@@ -144,20 +133,20 @@ transformed parameters{
       vector[N] b_pos1 = exp(B_t + 0.5 * b_t);
       vector[N] b_min1 = exp(B_t - 0.5 * b_t);
       
-      vector[N] s_correct   = exp(1 + s_t);
-      vector[N] s_incorrect = exp(1 - s_t);
+      real s_correct   = exp(1 + s_raw);
+      real s_incorrect = exp(1 - s_raw);
   
       for(n in 1:N) {
         if(stim[n] == 1) {
-          v_acc[n, 1] = v_correct[n] / s_correct[n];
-          v_acc[n, 2] = v_incorrect[n] / s_incorrect[n];
-          b_acc[n, 1] = b_pos1[n] / s_correct[n];
-          b_acc[n, 2] = b_min1[n] / s_incorrect[n];
+          v_acc[n, 1] = v_correct[n] / s_correct;
+          v_acc[n, 2] = v_incorrect[n] / s_incorrect;
+          b_acc[n, 1] = b_pos1[n] / s_correct;
+          b_acc[n, 2] = b_min1[n] / s_incorrect;
         } else { // stim == 2
-          v_acc[n, 1] = v_incorrect[n] / s_incorrect[n];
-          v_acc[n, 2] = v_correct[n] / s_correct[n];
-          b_acc[n, 1] = b_pos1[n] / s_incorrect[n];
-          b_acc[n, 2] = b_min1[n] / s_correct[n];
+          v_acc[n, 1] = v_incorrect[n] / s_incorrect;
+          v_acc[n, 2] = v_correct[n] / s_correct;
+          b_acc[n, 1] = b_pos1[n] / s_incorrect;
+          b_acc[n, 2] = b_min1[n] / s_correct;
         }
       }
     }
@@ -176,19 +165,16 @@ model {
   rho_b_raw ~ normal(0, 0.5);
   rho_V_raw ~ normal(0, 0.5);
   rho_v_raw ~ normal(0, 0.5);
-  rho_s_raw ~ normal(0, 0.5);
 
   log_sigma_B ~ normal(-1.203973,0.5);
   log_sigma_b ~ normal(-1.203973,0.5);
   log_sigma_V ~ normal(-1.203973,0.5);
   log_sigma_v ~ normal(-1.203973,0.5);
-  log_sigma_s ~ normal(-1.203973,0.5);
 
   B_z ~ std_normal();
   b_z ~ std_normal();
   V_z ~ std_normal();
   v_z ~ std_normal();
-  s_z ~ std_normal();
   
   // Likelihood loop
   for (n in 1:N) {
