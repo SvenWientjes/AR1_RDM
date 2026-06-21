@@ -7,8 +7,8 @@ get_error_cor <- function(MyData){
   ERdat$er_class <- "none"
   ERdat[stim==1 &er_speed<=0.5,er_class:="fast_1"]
   ERdat[stim==1 &er_speed >0.5,er_class:="slow_1"]
-  ERdat[stim==-1&er_speed<=0.5,er_class:="fast_-1"]
-  ERdat[stim==-1&er_speed >0.5,er_class:="slow_-1"]
+  ERdat[stim==2&er_speed<=0.5,er_class:="fast_2"]
+  ERdat[stim==2&er_speed >0.5,er_class:="slow_2"]
   ERdat[,prev_er_class:=shift(er_class),by=pp]
   ERdat <- ERdat[yi==1&er_class!="none"&!is.na(prev_er_class)]
   
